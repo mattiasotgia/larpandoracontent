@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <algorithm>
 
 #include <torch/script.h>
 #include <torch/torch.h>
@@ -30,7 +31,10 @@ namespace lar_dl_content
 DlVertexingAlgorithm::DlVertexingAlgorithm() :
     m_event{-1},
     m_visualise{false},
+    m_visualiseClasses{false},
+    m_visualiseRegion{false},
     m_writeTree{false},
+    m_visualiseColorMode{"standard"},
     m_rng(static_cast<std::mt19937::result_type>(std::chrono::high_resolution_clock::now().time_since_epoch().count()))
 {
 }
@@ -159,6 +163,20 @@ StatusCode DlVertexingAlgorithm::PrepareTrainingSample()
         // Only write out the feature vector if there were enough hits in the region of interest
         if (nHits > 10)
             LArMvaHelper::ProduceTrainingExample(trainingFilename, true, featureVector);
+
+#ifdef MONITORING
+        if (m_visualiseClasses)
+        {
+            ClassesToCaloHitListMap pClassesToCaloHitListMap;
+            this->PopulateTruthClassMap(xVtx, zVtx, xMin, xMax, zMin, zMax, pCaloHitList, pClassesToCaloHitListMap);
+            this->DrawClasses(pClassesToCaloHitListMap);
+        }
+
+        if (m_visualiseRegion)
+        {
+            this->DrawRegion(xMin, xMax, zMin, zMax);
+        }
+#endif
     }
 
     return STATUS_CODE_SUCCESS;
@@ -533,6 +551,67 @@ void DlVertexingAlgorithm::PopulateRootTree(const std::vector<VertexTuple> &vert
         }
     }
 }
+
+void DlVertexingAlgorithm::PopulateTruthClassMap(const int &xVtx,const int &zVtx, const int &xMin, const int &xMax, const int &zMin, const int& zMax, 
+    const CaloHitList *pCaloHitList, ClassesToCaloHitListMap &pClassesToCaloHitsListMap) const
+{
+    const int image_size{std::max(xMax-xMin, zMax-zMin)};
+    const float denominator{std::ceil(std::sqrt(2 * (static_cast<float>(image_size) - 1)))};
+    for (const CaloHit *pCaloHit : *pCaloHitList)
+    {
+        const float x{pCaloHit->GetPositionVector().GetX()}, z{pCaloHit->GetPositionVector().GetZ()};
+        // If on a refinement pass, drop hits outside the region of interest
+        // if (m_pass > 1 && (x < xMin || x > xMax || z < zMin || z > zMax))
+        //     continue;
+
+        const float distance{static_cast<float>(std::sqrt(std::pow(xVtx-x, 2) + std::pow(zVtx-z, 2)) / denominator)};
+
+        auto it = std::upper_bound(m_thresholds.begin(), m_thresholds.end(), distance);
+        int classId = static_cast<int>(it - m_thresholds.begin());
+
+        CaloHitList *&pList = pClassesToCaloHitsListMap[classId];
+        if (!pList)
+            pList = new CaloHitList();
+        pList->push_back(pCaloHit);
+    }
+}
+
+void DlVertexingAlgorithm::DrawClasses(const ClassesToCaloHitListMap &pClassesToCaloHitsListMap) const
+{
+    PANDORA_MONITORING_API(SetEveDisplayParameters(this->GetPandora(), true, DETECTOR_VIEW_XZ, -1.f, 1.f, 1.f));
+
+    for (const auto &[classId, caloHitList]: pClassesToCaloHitsListMap)
+    {
+        std::string label{"Class" + std::to_string(classId)};
+
+        Color classColor{static_cast<Color>(classId)};
+        if (m_visualiseColorMode == "auto")
+            classColor = Color::AUTOITER;
+        else if (m_visualiseColorMode == "gradient")
+            classColor = Color::AUTOENERGY;
+        else 
+            std::cout << "Unknown VisuliseColorMode: " << m_visualiseColorMode
+                      << ", using \"standard\"" << std::endl;
+
+        PANDORA_MONITORING_API(VisualizeCaloHits(this->GetPandora(), caloHitList, label, classColor));
+    }
+
+    PANDORA_MONITORING_API(ViewEvent(this->GetPandora()));
+}
+
+void DlVertexingAlgorithm::DrawRegion(const int &xMin, const int &xMax, const int &zMin, const int& zMax) const
+{
+    PANDORA_MONITORING_API(SetEveDisplayParameters(this->GetPandora(), true, DETECTOR_VIEW_XZ, -1.f, 1.f, 1.f));
+
+    const CartesianVector A(xMin, 0.f, zMin), B(xMax, 0.f, zMin), C(xMax, 0.f, zMax), D(xMin, 0.f, zMax);
+
+    PANDORA_MONITORING_API(AddLineToVisualization(this->GetPandora(), &A, &B, "region", Color::BLACK, 1, 2));
+    PANDORA_MONITORING_API(AddLineToVisualization(this->GetPandora(), &B, &C, "region", Color::BLACK, 1, 2));
+    PANDORA_MONITORING_API(AddLineToVisualization(this->GetPandora(), &C, &D, "region", Color::BLACK, 1, 2));
+    PANDORA_MONITORING_API(AddLineToVisualization(this->GetPandora(), &D, &A, "region", Color::BLACK, 1, 2));
+
+    PANDORA_MONITORING_API(ViewEvent(this->GetPandora()));
+}
 #endif
 
 //-----------------------------------------------------------------------------------------------------------------------------------------
@@ -542,6 +621,14 @@ StatusCode DlVertexingAlgorithm::ReadSettings(const TiXmlHandle xmlHandle)
     PANDORA_RETURN_RESULT_IF(STATUS_CODE_SUCCESS, !=, DlVertexingBaseAlgorithm::ReadSettings(xmlHandle));
 
     PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle, "Visualise", m_visualise));
+
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle, "VisualiseClasses", m_visualiseClasses));
+    PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle, "VisualiseRegion", m_visualiseRegion));
+
+    if (m_visualiseClasses)
+    {
+        PANDORA_RETURN_RESULT_IF_AND_IF(STATUS_CODE_SUCCESS, STATUS_CODE_NOT_FOUND, !=, XmlHelper::ReadValue(xmlHandle, "VisualiseColorMode", m_visualiseColorMode));
+    }
 
     if (!m_trainingMode)
     {

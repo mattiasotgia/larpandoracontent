@@ -29,6 +29,8 @@ namespace lar_dl_content
 class DlVertexingAlgorithm : public DlVertexingBaseAlgorithm
 {
 public:
+    typedef std::map<int, pandora::CaloHitList *> ClassesToCaloHitListMap;
+
     /**
      *  @brief Default constructor
      */
@@ -94,14 +96,23 @@ private:
      */
     void PopulateRootTree(const std::vector<VertexTuple> &vertexTuples, const pandora::CartesianPointVector &vertexCandidatesU,
         const pandora::CartesianPointVector &vertexCandidatesV, const pandora::CartesianPointVector &vertexCandidatesW) const;
+
+    void PopulateTruthClassMap(const int &xVtx,const int &zVtx, const int &xMin, const int &xMax, 
+        const int &zMin, const int& zMax, 
+        const pandora::CaloHitList *pCaloHitList, ClassesToCaloHitListMap &pClassesToCaloHitsListMap) const;
+    void DrawClasses(const ClassesToCaloHitListMap &pClassesToCaloHitsListMap) const;
+    void DrawRegion(const int &xMin, const int &xMax, const int &zMin, const int& zMax) const;
 #endif
 
-    int m_event;                ///< The current event number
-    bool m_visualise;           ///< Whether or not to visualise the candidate vertices
-    bool m_writeTree;           ///< Whether or not to write validation details to a ROOT tree
-    std::string m_rootTreeName; ///< The ROOT tree name
-    std::string m_rootFileName; ///< The ROOT file name
-    std::mt19937 m_rng;         ///< The random number generator
+    int m_event;                        ///< The current event number
+    bool m_visualise;                   ///< Whether or not to visualise the candidate vertices
+    bool m_visualiseClasses;            ///< Wheter to visualize the truth/predicted classes
+    bool m_visualiseRegion;             ///< Wheter to visualize the predicted region from past passes
+    bool m_writeTree;                   ///< Whether or not to write validation details to a ROOT tree
+    std::string m_visualiseColorMode;   ///< Set the color mode for the classes visualisation
+    std::string m_rootTreeName;         ///< The ROOT tree name
+    std::string m_rootFileName;         ///< The ROOT file name
+    std::mt19937 m_rng;                 ///< The random number generator
 };
 
 } // namespace lar_dl_content
